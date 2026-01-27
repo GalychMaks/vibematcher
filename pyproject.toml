@@ -3,7 +3,19 @@ name = "vibematcher"
 version = "0.1.0"
 description = ""
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scipy>=1.10",
+  "soundfile>=0.12",
+  "librosa>=0.10",
+  "torch>=2.1",
+  "torchaudio>=2.1",
+  "transformers>=4.40",
+  "huggingface-hub>=0.20",
+  "gradio>=4.0",
+  "pydub>=0.25.1",
+]
 
 [dependency-groups]
 dev = ["pre-commit>=4.5.0", "go-task-bin>=3.45.5"]
@@ -11,6 +23,3 @@ dev = ["pre-commit>=4.5.0", "go-task-bin>=3.45.5"]
 [build-system]
 requires = ["setuptools >= 77.0.3"]
 build-backend = "setuptools.build_meta"
-
-[tool.uv]
-package = false
