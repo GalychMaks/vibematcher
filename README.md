@@ -29,3 +29,9 @@ System to detect plagiarism in music
     ```bash
     uv run pre-commit install
     ```
+
+## 💻 Run Demo
+
+```bash
+uv run python -m demo.app
+```
