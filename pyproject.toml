@@ -1,0 +1,16 @@
+[project]
+name = "vibematcher"
+version = "0.1.0"
+description = ""
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = ["pre-commit>=4.5.0", "go-task-bin>=3.45.5"]
+
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = false
