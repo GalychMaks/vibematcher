@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from vibematcher.mert_embedder import MertEmbedder
+from vibematcher.fingerprint.mert_embedder import MertEmbedder
 
 
 @dataclass

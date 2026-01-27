@@ -3,8 +3,8 @@ from pathlib import Path
 import gradio as gr
 import pandas as pd
 
-from vibematcher.compare import compare_fingerprints
-from vibematcher.fingerprint import AudioFingerprint
+from vibematcher.compare.compare import compare_fingerprints
+from vibematcher.fingerprint.fingerprint import AudioFingerprint
 
 
 # -----------------------

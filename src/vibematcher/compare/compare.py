@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Dict
 
-from vibematcher.fingerprint import AudioFingerprint
-from vibematcher.utils import cosine_similarity
+from vibematcher.fingerprint.fingerprint import AudioFingerprint
+from vibematcher.compare.utils import cosine_similarity
 
 
 @dataclass(frozen=True)
