@@ -1,4 +1,5 @@
 from pathlib import Path
+import heapq
 
 import gradio as gr
 import pandas as pd
@@ -13,6 +14,9 @@ from vibematcher.fingerprint.fingerprint import AudioFingerprint
 # Hardcoded settings
 # -----------------------
 DATASET_DIR = Path("data/original")  # <-- change to your fingerprints root dir
+
+# Cache heatmaps only for top-K matches (to avoid storing huge matrices for large datasets)
+CACHE_HEATMAP_TOP_K = 100
 
 
 def cache_dir_for_audio(audio_file: Path) -> Path:
@@ -81,13 +85,14 @@ def make_heatmap_fig(
 # -----------------------
 def compare(
     audio_path: str,
-) -> tuple[pd.DataFrame, AudioFingerprint, str, plt.Figure | None]:
+) -> tuple[pd.DataFrame, dict, str, plt.Figure | None, str | None]:
     """
     Returns:
       - results df
-      - query fp state
+      - cache dict (aspects for all items + heatmaps for top-K)
       - details markdown (reset/placeholder)
       - heatmap figure (reset)
+      - selected audio (reset)
     """
     if not audio_path:
         raise gr.Error("Upload an audio file.")
@@ -97,59 +102,106 @@ def compare(
     items: list[str] = []
     similarities: list[float] = []
 
+    aspects_by_item: dict[str, dict[str, float]] = {}
+    query_starts: np.ndarray | None = None
+
+    # Keep only top-K heatmaps in a min-heap: (overall, item, mert_mat, cand_starts)
+    top_heap: list[tuple[float, str, np.ndarray, np.ndarray | None]] = []
+
     original_files = sorted(DATASET_DIR.rglob("*.wav"))
     for original_file in original_files:
+        item = str(original_file)
+
         original_fp = ensure_fp_for_file(Path(original_file))
         r = compare_fingerprints(q, original_fp)
-        items.append(str(original_file))
-        similarities.append(float(r.overall))
+
+        overall = float(r.overall)
+        aspects = {k: float(v) for k, v in r.aspects.items()}
+
+        items.append(item)
+        similarities.append(overall)
+        aspects_by_item[item] = aspects
+
+        if query_starts is None:
+            query_starts = r.query_chunk_starts_sec
+
+        mert_mat = r.correlation_matrices.get("mert")
+        if mert_mat is not None:
+            entry = (overall, item, mert_mat, r.cand_chunk_starts_sec)
+            if len(top_heap) < CACHE_HEATMAP_TOP_K:
+                heapq.heappush(top_heap, entry)
+            else:
+                if overall > top_heap[0][0]:
+                    heapq.heapreplace(top_heap, entry)
 
     df = pd.DataFrame({"item": items, "similarity": similarities})
     df = df.sort_values("similarity", ascending=False).reset_index(drop=True)
 
-    details_md = "### Details\nSelect a row in the table above to see details."
-    return df, q, details_md, None
+    # Build heatmap cache dict from heap
+    mert_cache: dict[str, dict[str, object]] = {}
+    for overall, item, mat, cand_starts in top_heap:
+        mert_cache[item] = {"mat": mat, "cand_starts": cand_starts}
+
+    cache = {
+        "query_starts": query_starts,
+        "aspects": aspects_by_item,
+        "mert": mert_cache,  # only for top-K
+        "heatmap_top_k": CACHE_HEATMAP_TOP_K,
+    }
+
+    details_md = "### Details\nClick a row to load/play that audio (no recomputation)."
+    return df, cache, details_md, None, None
 
 
 def show_details(
     df: pd.DataFrame,
-    q: AudioFingerprint,
+    cache: dict,
     evt: gr.SelectData,
-) -> tuple[str, plt.Figure]:
+) -> tuple[str, plt.Figure | None, str]:
+    """
+    On row click:
+      - DO NOT recompute anything
+      - load / play selected audio
+      - show cached heatmap if available (top-K only)
+    """
     if df is None or len(df) == 0:
         raise gr.Error("No results yet. Click Compare first.")
-    if q is None:
-        raise gr.Error("No query fingerprint yet. Click Compare first.")
 
-    # evt.index is (row, col) for Dataframe
+    cache = cache or {}
+    aspects_by_item: dict[str, dict[str, float]] = cache.get("aspects", {}) or {}
+    mert_cache: dict[str, dict[str, object]] = cache.get("mert", {}) or {}
+    query_starts: np.ndarray | None = cache.get("query_starts")
+    top_k = int(cache.get("heatmap_top_k", CACHE_HEATMAP_TOP_K))
+
     row = int(evt.index[0]) if isinstance(evt.index, (tuple, list)) else int(evt.index)
 
     item = str(df.iloc[row]["item"])
-    cand_fp = ensure_fp_for_file(Path(item))
+    sim = float(df.iloc[row]["similarity"])
+    aspects = aspects_by_item.get(item)
 
-    r = compare_fingerprints(q, cand_fp)
+    # Load audio path (this is the main thing you asked for)
+    selected_audio_path = item
 
-    mert_mat = r.correlation_matrices.get("mert")
-    if mert_mat is None:
-        raise gr.Error(
-            "compare_fingerprints did not return correlation_matrices['mert']."
-        )
-
-    fig = make_heatmap_fig(
-        mert_mat,
-        r.query_chunk_starts_sec,
-        r.cand_chunk_starts_sec,
-    )
+    # Heatmap only if cached from Compare() step
+    fig = None
+    mert_entry = mert_cache.get(item)
+    if mert_entry is not None:
+        mat = mert_entry.get("mat")
+        cand_starts = mert_entry.get("cand_starts")
+        if isinstance(mat, np.ndarray):
+            fig = make_heatmap_fig(mat, query_starts, cand_starts)
 
     md = (
         "### Details\n"
         f"**Item:** `{item}`\n\n"
-        f"**Similarity (overall):** `{float(r.overall):.4f}`\n\n"
-        f"**Aspects:** `{ {k: float(v) for k, v in r.aspects.items()} }`\n\n"
-        f"**Matrix shape (mert):** `{tuple(mert_mat.shape)}`"
+        f"**Similarity (overall):** `{sim:.4f}`\n\n"
+        f"**Aspects:** `{aspects if aspects is not None else 'n/a'}`\n\n"
     )
 
-    return md, fig
+    if fig is None:
+        md += f"**Heatmap:** not cached (only stored for top-{top_k} matches)\n"
+
+    return md, fig, selected_audio_path
 
 
 # -----------------------
@@ -158,7 +210,7 @@ def show_details(
 with gr.Blocks(title="VibeMatcher") as demo:
     gr.Markdown("## VibeMatcher — audio similarity (MERT cosine, chunked)")
 
-    q_state = gr.State(None)
+    cache_state = gr.State({})
 
     inp = gr.Audio(sources=["upload"], type="filepath", label="Input audio")
     run_btn = gr.Button("Compare", variant="primary")
@@ -173,13 +225,24 @@ with gr.Blocks(title="VibeMatcher") as demo:
 
     gr.Markdown("---")
     details_md = gr.Markdown("### Details\nRun Compare, then click a row.")
-    heat = gr.Plot(label="Chunk similarity heatmap")
+    selected_audio = gr.Audio(
+        label="Selected item audio", type="filepath", interactive=False
+    )
+    heat = gr.Plot(label="Chunk similarity heatmap (cached for top matches)")
 
-    # Compare fills table + stores query fp + resets details section
-    run_btn.click(fn=compare, inputs=inp, outputs=[out, q_state, details_md, heat])
+    # Compare fills table + stores cache + resets details/plot/audio
+    run_btn.click(
+        fn=compare,
+        inputs=inp,
+        outputs=[out, cache_state, details_md, heat, selected_audio],
+    )
 
-    # Selecting a row updates details section under the table
-    out.select(fn=show_details, inputs=[out, q_state], outputs=[details_md, heat])
+    # Selecting a row loads audio + shows cached details/heatmap (no recomputation)
+    out.select(
+        fn=show_details,
+        inputs=[out, cache_state],
+        outputs=[details_md, heat, selected_audio],
+    )
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)
