@@ -15,6 +15,7 @@ dependencies = [
   "huggingface-hub>=0.20",
   "gradio>=4.0",
   "pydub>=0.25.1",
+  "matplotlib>=3.10.8",
 ]
 
 [dependency-groups]
