@@ -1,7 +1,9 @@
 from pathlib import Path
+
 import numpy as np
 import soundfile as sf
 import torch
+import torch.nn.functional as F
 import torchaudio.transforms as T
 from transformers import AutoModel, Wav2Vec2FeatureExtractor
 
@@ -43,66 +45,102 @@ class MertEmbedder:
 
         # Target sample rate expected by MERT
         self.target_sr = self.processor.sampling_rate
+        self.resampler = None  # lazy
 
-        # Lazy initialization of resampler
-        self.resampler = None
-
-    def embed(self, path: str | Path) -> np.ndarray:
+    def _embed_audio_tensor(self, audio_tensor: torch.Tensor) -> np.ndarray:
         """
-        Extracts a embedding from an audio file using a pretrained MERT model.
-
-        The embedding is computed by:
-        - Resampling the audio to the model's target sample rate.
-        - Feeding it through the model to obtain hidden states from all layers.
-        - Averaging over time for each layer.
-        - Averaging the results across all layers to obtain a fixed-size embedding.
-
-        :param path: Path to the audio file.
-        :return: 1D numpy array representing the extracted feature vector.
+        audio_tensor: 1D mono torch tensor at self.target_sr
+        returns: 1D np.ndarray (D,) float32
         """
-        #!!! Shapes can differ depending on the model, comments are for default model
+        inputs = self.processor(
+            audio_tensor.cpu().numpy(),
+            sampling_rate=self.target_sr,
+            return_tensors="pt",
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        # Load audio file
-        audio, sr = sf.read(path)  # shape: (T,) or (T, C)
+        with torch.inference_mode():
+            outputs = self.model(**inputs, output_hidden_states=True)
 
-        # Convert stereo to mono
-        if len(audio.shape) == 2:
-            audio = np.mean(audio, axis=1)  # shape: (T,)
+        # [num_layers, 1, T, D] -> [num_layers, T, D]
+        all_layer_hidden_states = torch.stack(outputs.hidden_states).squeeze(1)
 
-        # Resample if needed
-        audio_tensor = torch.from_numpy(audio).float()  # shape: (T,)
+        # time avg -> [num_layers, D]
+        time_avg = all_layer_hidden_states.mean(dim=1)
+
+        # layer avg -> [D]
+        embedding = time_avg.mean(dim=0)
+
+        return embedding.detach().cpu().numpy().astype(np.float32)
+
+    def embed(
+        self,
+        path: str | Path,
+        chunk_seconds: float = 5.0,
+        overlap_seconds: float = 2.5,
+    ) -> np.ndarray:
+        """
+        Returns a 2D embedding matrix of shape (num_chunks, embedding_dim).
+
+        Chunking:
+          - chunk length: 5 seconds (default)
+          - overlap: 2.5 seconds (default)
+          - step = chunk_seconds - overlap_seconds
+
+        The last chunk is zero-padded to exactly chunk_seconds (if needed).
+        """
+        if overlap_seconds < 0:
+            raise ValueError("overlap_seconds must be >= 0")
+        if chunk_seconds <= 0:
+            raise ValueError("chunk_seconds must be > 0")
+        if overlap_seconds >= chunk_seconds:
+            raise ValueError("overlap_seconds must be < chunk_seconds")
+
+        audio, sr = sf.read(path)  # (T,) or (T, C)
+        if audio.ndim == 2:
+            audio = np.mean(audio, axis=1)
+
+        audio_tensor = torch.from_numpy(audio).float()
+        if audio_tensor.numel() == 0:
+            return np.empty((0, 0), dtype=np.float32)
+
+        # resample whole signal once
         if sr != self.target_sr:
             if self.resampler is None or self.resampler.orig_freq != sr:
                 self.resampler = T.Resample(orig_freq=sr, new_freq=self.target_sr)
-            audio_tensor = self.resampler(audio_tensor)  # shape: (T',)
+            audio_tensor = self.resampler(audio_tensor)
 
-        # Tokenize input
-        inputs = self.processor(
-            audio_tensor.numpy(), sampling_rate=self.target_sr, return_tensors="pt"
-        )  # input_values shape: (1, T')
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        total_len = int(audio_tensor.numel())
+        if total_len == 0:
+            return np.empty((0, 0), dtype=np.float32)
 
-        # Get hidden states from MERT
-        with torch.inference_mode():
-            outputs = self.model(**inputs, output_hidden_states=True)
-            # self.logger.debug(f"Outputs shape: {outputs.hidden_states[0].shape}")
-            # each hidden state: (1, T'', 768)
+        chunk_len = int(round(chunk_seconds * self.target_sr))
+        overlap_len = int(round(overlap_seconds * self.target_sr))
+        step = chunk_len - overlap_len
 
-        # Stack hidden states: [13 layers, T'', 768]
-        all_layer_hidden_states = torch.stack(outputs.hidden_states).squeeze()
-        # shape: (13, T'', 768)
+        if chunk_len <= 0:
+            raise ValueError("chunk_seconds too small for the current sampling rate")
+        if step <= 0:
+            raise ValueError("Invalid chunk/overlap configuration (step <= 0)")
 
-        # self.logger.debug(
-        #     f"All layer hidden states shape: {all_layer_hidden_states.shape}"
-        # )
+        chunk_embeds: list[np.ndarray] = []
 
-        # Average across time -> shape: (13, 768)
-        time_avg = all_layer_hidden_states.mean(dim=1)
-        # self.logger.debug(f"Time average shape: {time_avg.shape}")
+        start = 0
+        while start < total_len:
+            end = start + chunk_len
+            chunk = audio_tensor[start:end]
 
-        # Then average across layers -> shape: (768,)
-        embedding = time_avg.mean(dim=0)
-        # self.logger.debug(f"Embedding shape: {embedding.shape}")
+            # last chunk: pad to full length and stop
+            if chunk.numel() < chunk_len:
+                chunk = F.pad(chunk, (0, chunk_len - chunk.numel()))
+                chunk_embeds.append(self._embed_audio_tensor(chunk))
+                break
 
-        # Return as NumPy array
-        return embedding.cpu().numpy().astype(np.float32)  # shape: (768,)
+            chunk_embeds.append(self._embed_audio_tensor(chunk))
+            start += step
+
+        if not chunk_embeds:
+            return np.empty((0, 0), dtype=np.float32)
+
+        # (N, D)
+        return np.stack(chunk_embeds, axis=0).astype(np.float32, copy=False)
