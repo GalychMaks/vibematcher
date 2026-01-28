@@ -1,18 +1,17 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from vibematcher.fingerprint.mert_embedder import MertEmbedder
+from vibematcher.features.mert_embedder import MertEmbedder
+from vibematcher.features.mert_embedding import MertEmbedding
 from vibematcher.fingerprint.f0_extractor import F0Extractor
 
 
 @dataclass
 class AudioFingerprint:
-    # (num_chunks, embedding_dim) float32
-    mert_embeddings: np.ndarray
-    # (num_frames,) float32, NaN for unvoiced frames
-    f0_hz: np.ndarray
+    mert_embedding: MertEmbedding
 
     @classmethod
     def from_audio_file(
@@ -57,6 +56,16 @@ class AudioFingerprint:
         np.save(
             dir_path / "f0_hz.npy",
             self.f0_hz.astype(np.float32, copy=False),
+        )
+        metadata = {
+            "mert_embeddings": {
+                "shape": list(self.mert_embeddings.shape),
+                "dtype": "float32",
+            },
+            "f0_hz": {"shape": list(self.f0_hz.shape), "dtype": "float32"},
+        }
+        (dir_path / "metadata.json").write_text(
+            json.dumps(metadata, separators=(",", ":")), encoding="utf-8"
         )
 
     @classmethod

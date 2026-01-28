@@ -11,12 +11,18 @@ dependencies = [
   "librosa>=0.10",
   "torch>=2.1",
   "torchaudio>=2.1",
-  "transformers>=4.40",
+  "transformers==4.51.1",
   "huggingface-hub>=0.20",
   "gradio>=4.0",
   "pydub>=0.25.1",
   "matplotlib>=3.10.8",
   "dtw-python==1.7.2",
+  "ema-pytorch>=0.7.9",
+  "loguru>=0.7.3",
+  "muq>=0.1.0",
+  "omegaconf>=2.3.0",
+  "msaf>=0.1.80",
+  "x-transformers>=2.14.2",
 ]
 
 [dependency-groups]

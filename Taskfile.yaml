@@ -11,4 +11,9 @@ tasks:
   clear-cache:
     desc: Clear the cache directory
     cmds:
-      - cd data/originals && rm -rf -- */
+      - cd data/original && rm -rf -- */
+
+  compare:
+    desc: Compare two songs and generate a similarity report
+    cmds:
+      - uv run python -m vibematcher.comparison.compare
