@@ -16,6 +16,7 @@ dependencies = [
   "gradio>=4.0",
   "pydub>=0.25.1",
   "matplotlib>=3.10.8",
+  "dtw-python==1.7.2",
 ]
 
 [dependency-groups]

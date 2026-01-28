@@ -1,14 +1,14 @@
-from pathlib import Path
 import heapq
+from pathlib import Path
 
 import gradio as gr
-import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from matplotlib import colors
 
 from vibematcher.compare.compare import compare_fingerprints
 from vibematcher.fingerprint.fingerprint import AudioFingerprint
-
 
 # -----------------------
 # Hardcoded settings
@@ -40,42 +40,23 @@ def ensure_fp_for_file(audio_file: Path) -> AudioFingerprint:
     return fp
 
 
-def make_heatmap_fig(
-    sim: np.ndarray,
-    q_starts: np.ndarray | None = None,
-    c_starts: np.ndarray | None = None,
-) -> plt.Figure:
+def make_heatmap_fig(sim: np.ndarray, *, p_low=5, p_high=95, gamma=0.5) -> plt.Figure:
+    sim = np.asarray(sim, dtype=float)
+    vmin, vmax = np.nanpercentile(sim, [p_low, p_high])
+
     fig = plt.figure()
     ax = fig.add_subplot(111)
 
-    if (
-        q_starts is not None
-        and c_starts is not None
-        and len(q_starts) > 0
-        and len(c_starts) > 0
-    ):
-        extent = [
-            float(c_starts[0]),
-            float(c_starts[-1]),
-            float(q_starts[0]),
-            float(q_starts[-1]),
-        ]
-        im = ax.imshow(
-            sim,
-            aspect="auto",
-            origin="lower",
-            extent=extent,
-            vmin=-1.0,
-            vmax=1.0,
-        )
-        ax.set_xlabel("candidate time (sec)")
-        ax.set_ylabel("query time (sec)")
-    else:
-        im = ax.imshow(sim, aspect="auto", origin="lower", vmin=-1.0, vmax=1.0)
-        ax.set_xlabel("candidate chunk index")
-        ax.set_ylabel("query chunk index")
+    norm = colors.PowerNorm(gamma=gamma, vmin=vmin, vmax=vmax, clip=True)
+    im = ax.imshow(sim, aspect="auto", origin="lower", norm=norm)
 
-    fig.colorbar(im, ax=ax, label="cosine similarity")
+    ax.set_xlabel("candidate chunk index")
+    ax.set_ylabel("query chunk index")
+    fig.colorbar(
+        im,
+        ax=ax,
+        label=f"cosine similarity (power γ={gamma}, clipped {p_low}–{p_high} pct)",
+    )
     fig.tight_layout()
     return fig
 
@@ -170,7 +151,6 @@ def show_details(
     cache = cache or {}
     aspects_by_item: dict[str, dict[str, float]] = cache.get("aspects", {}) or {}
     mert_cache: dict[str, dict[str, object]] = cache.get("mert", {}) or {}
-    query_starts: np.ndarray | None = cache.get("query_starts")
     top_k = int(cache.get("heatmap_top_k", CACHE_HEATMAP_TOP_K))
 
     row = int(evt.index[0]) if isinstance(evt.index, (tuple, list)) else int(evt.index)
@@ -187,9 +167,8 @@ def show_details(
     mert_entry = mert_cache.get(item)
     if mert_entry is not None:
         mat = mert_entry.get("mat")
-        cand_starts = mert_entry.get("cand_starts")
         if isinstance(mat, np.ndarray):
-            fig = make_heatmap_fig(mat, query_starts, cand_starts)
+            fig = make_heatmap_fig(mat)
 
     md = (
         "### Details\n"
