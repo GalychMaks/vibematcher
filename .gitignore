@@ -7,6 +7,8 @@ __pycache__/
 
 rmvpe.pt
 
+music_dataset
+
 # === Bytecode and runtime ===
 *.log
 *.pot
