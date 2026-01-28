@@ -1,25 +1,27 @@
 from pathlib import Path
-
 import gradio as gr
 import pandas as pd
+import numpy as np
 
-from vibematcher.compare import compare_fingerprints
 from vibematcher.fingerprint import AudioFingerprint
-
+from vibematcher.decisionmatrix import compute_similarity_matrix, aggregate_similarity_score, build_decision_matrix
 
 # -----------------------
 # Hardcoded settings
 # -----------------------
-DATASET_DIR = Path("data/original")  # <-- change to your fingerprints root dir
+DATASET_DIR = Path("data/original")  # root dir with your dataset audio files
+WINDOW_LEN_SEC = 7  # chunk length in seconds
+HOP_LEN_SEC = 3      # overlap between chunks in seconds
 
-
+# -----------------------
+# Helper: cache directory for embeddings
+# -----------------------
 def cache_dir_for_audio(audio_file: Path) -> Path:
     """
-    Cache fingerprints to: <audio_file.parent>/<audio_file.stem>/
+    Cache fingerprints/embeddings to: <audio_file.parent>/<audio_file.stem>/
     Example: data/original/Artist/song.wav -> data/original/Artist/song/
     """
     return audio_file.parent / audio_file.stem
-
 
 # -----------------------
 # Gradio callback
@@ -28,34 +30,57 @@ def compare(audio_path: str) -> pd.DataFrame:
     if not audio_path:
         raise gr.Error("Upload an audio file.")
 
-    q = AudioFingerprint.from_audio_file(audio_path)
+    # -----------------------
+    # Load or compute query audio embeddings
+    # -----------------------
+    query_fp_dir = cache_dir_for_audio(Path(audio_path))
+    if query_fp_dir.exists():
+        query_fp = AudioFingerprint.load_from_dir(query_fp_dir)
+    else:
+        query_fp = AudioFingerprint.from_audio_file(
+            audio_path, window_len_sec=WINDOW_LEN_SEC, hop_len_sec=HOP_LEN_SEC
+        )
+        query_fp_dir.mkdir(parents=True, exist_ok=True)
+        query_fp.save_to_dir(query_fp_dir)
 
     items: list[str] = []
     similarities: list[float] = []
 
-    # NOTE: rglob returns a generator; we want a stable list for reuse + display.
-    original_files = sorted(DATASET_DIR.rglob("*.wav"))
+    # -----------------------
+    # Iterate over dataset files
+    # -----------------------
+    dataset_files = sorted(DATASET_DIR.rglob("*.wav"))
+    for dataset_file in dataset_files:
+        dataset_file = Path(dataset_file)
+        fp_dir = cache_dir_for_audio(dataset_file)
 
-    for original_file in original_files:
-        original_file = Path(original_file)
-        fp_dir = cache_dir_for_audio(original_file)
-
+        # Load or compute dataset embeddings
         if fp_dir.exists():
-            original_fp = AudioFingerprint.load_from_dir(fp_dir)
+            dataset_fp = AudioFingerprint.load_from_dir(fp_dir)
         else:
-            print(f"Computing fingerprint for: {original_file}")
-            original_fp = AudioFingerprint.from_audio_file(original_file)
+            print(f"Computing embeddings for: {dataset_file}")
+            dataset_fp = AudioFingerprint.from_audio_file(
+                dataset_file, window_len_sec=WINDOW_LEN_SEC, hop_len_sec=HOP_LEN_SEC
+            )
             fp_dir.mkdir(parents=True, exist_ok=True)
-            original_fp.save_to_dir(fp_dir)
+            dataset_fp.save_to_dir(fp_dir)
 
-        r = compare_fingerprints(q, original_fp)
-        items.append(str(original_file))
-        similarities.append(float(r.overall))
+        # Compute similarity matrix (chunk-wise)
+        sim_matrix = compute_similarity_matrix(query_fp.mert_embeddings, dataset_fp.mert_embeddings)
 
+        # Aggregate into a continuous similarity score [0-1]
+        decision_matrix = build_decision_matrix(sim_matrix)
+        score = aggregate_similarity_score(decision_matrix)
+
+        items.append(str(dataset_file))
+        similarities.append(float(score))
+
+    # -----------------------
+    # Build result DataFrame
+    # -----------------------
     df = pd.DataFrame({"item": items, "similarity": similarities})
     df = df.sort_values("similarity", ascending=False).reset_index(drop=True)
     return df
-
 
 # -----------------------
 # UI: input audio + button + output
@@ -74,5 +99,8 @@ with gr.Blocks(title="VibeMatcher") as demo:
 
     run_btn.click(fn=compare, inputs=inp, outputs=out)
 
+# -----------------------
+# Launch Gradio app
+# -----------------------
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)
