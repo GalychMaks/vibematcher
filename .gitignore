@@ -5,6 +5,8 @@ __pycache__/
 *.pyd
 *.so
 
+rmvpe.pt
+
 # === Bytecode and runtime ===
 *.log
 *.pot
