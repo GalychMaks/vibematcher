@@ -12,8 +12,14 @@ tasks:
     desc: Clear the cache directory
     cmds:
       - cd data/original && rm -rf -- */
+      - cd data/comparison && rm -rf -- */
 
   compare:
     desc: Compare two songs and generate a similarity report
     cmds:
-      - uv run python -m vibematcher.comparison.compare
+      - uv run python -m vibematcher.features.melody_sim
+
+  mert:
+    desc: Generate MERT embeddings for audio files in the data/original directory
+    cmds:
+      - uv run python -m vibematcher.features.mert_embedder

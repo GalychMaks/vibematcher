@@ -23,6 +23,7 @@ dependencies = [
   "omegaconf>=2.3.0",
   "msaf>=0.1.80",
   "x-transformers>=2.14.2",
+  "torchcodec>=0.10.0",
 ]
 
 [dependency-groups]

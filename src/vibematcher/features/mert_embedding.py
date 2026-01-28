@@ -37,9 +37,11 @@ class MertEmbedding:
         emb_path = cache_dir / cls.CACHE_FILENAME
         # If already computed -> load
         if not force_recompute and cache_dir.exists() and emb_path.exists():
-            return np.asarray(
-                np.load(emb_path, allow_pickle=False),
-                dtype=np.float32,
+            return cls(
+                embedding=np.asarray(
+                    np.load(emb_path, allow_pickle=False),
+                    dtype=np.float32,
+                )
             )
 
         # Else compute + save
