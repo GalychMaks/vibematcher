@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from tqdm import tqdm
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -15,7 +14,8 @@ from vibematcher.features.mert_embedding import MertEmbedding
 
 @dataclass(frozen=True)
 class MelodySimChunkResult:
-    chunk_path: Path
+    q_chunk_path: Path
+    r_chunk_path: Path
     score: float
     decision: int
     decision_matrix: torch.Tensor
@@ -238,7 +238,7 @@ class MelodySimCompare:
         results: list[MelodySimChunkResult] = []
         device = self.siamese.device
 
-        for r in references:
+        for r in tqdm(references):
             r_chunks: list[Path] = AudioChunks.from_audio_file(
                 r,
                 song_former=song_former,
@@ -295,14 +295,13 @@ class MelodySimCompare:
 
                     # ================== Score ==================
                     score = float(similarity_matrix.mean().item())
-                    print(score)
 
                     # ================== Final (CPU) ==================
                     if score > best_score:
-                        print("change")
                         best_score = score
                         best_result = MelodySimChunkResult(
-                            chunk_path=r_chunk_path,
+                            q_chunk_path=q_chunk_path,
+                            r_chunk_path=r_chunk_path,
                             score=score,
                             decision=int(decision),
                             decision_matrix=decision_matrix.detach().cpu(),
@@ -327,22 +326,25 @@ if __name__ == "__main__":
     query = Path("data/comparison/Smoke On The Water _2024 Remastered_.wav")
     print(f"Query: {query}")
     references = [Path(path) for path in Path("data/original").glob("*.wav")]
-    results: MelodySimChunkResult = comparator.compare(
+    results: list[MelodySimChunkResult] = comparator.compare(
         query=query,
         references=references,
     )
 
     pairs = list(
         zip(
-            [r.chunk_path for r in results],
+            [r.q_chunk_path for r in results],
+            [r.r_chunk_path for r in results],
             [r.score for r in results],
         ),
     )
-    pairs.sort(key=lambda x: x[1], reverse=True)
+    pairs.sort(key=lambda x: x[2], reverse=True)
 
-    for ref, score in pairs:
-        print(f"{score:0.6f}  {ref}")
+    print("score     | q_chunk | r_chunk")
+    print("-" * 60)
+    for q_chunk, r_chunk, score in pairs:
+        print(f"{score:0.6f}  {q_chunk}  {r_chunk}")
 
-    best_reference, best_score = pairs[0]
+    best_q_chunk, best_r_chunk, best_score = pairs[0]
     print("\nBest option is:")
-    print(f"{best_reference}: {best_score:0.6f}")
+    print(f"{best_score:0.6f}  {best_q_chunk}  {best_r_chunk}")
