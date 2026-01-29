@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -14,107 +17,6 @@ class MelodySimResult:
     decision: int
     decision_matrix: torch.Tensor
     similarity_matrix: torch.Tensor
-
-
-class SiameseWrapper(nn.Module):
-    def __init__(self, embedding_dim: int = 128):
-        super().__init__()
-        self.siamese_net = SiameseNet(embedding_dim=embedding_dim)
-        self.classifier = nn.Sequential(
-            nn.Linear(embedding_dim, embedding_dim),
-            nn.ReLU(),
-            nn.Linear(embedding_dim, embedding_dim),
-            nn.ReLU(),
-            nn.Linear(embedding_dim, 1),
-        )
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    @torch.no_grad()
-    def inference_step(
-        self, sample1: torch.Tensor, sample2: torch.Tensor
-    ) -> torch.Tensor:
-        out_embs1 = self.siamese_net(sample1)
-        out_embs2 = self.siamese_net(sample2)
-        diff = torch.abs(out_embs1 - out_embs2)
-        logit = self.classifier(diff).squeeze()
-        scores = torch.sigmoid(logit)
-        return scores
-
-
-class MelodySimCompare:
-    def __init__(self):
-        self.siamese = SiameseWrapper()
-        self.mert_embedder = MertEmbedder()
-
-    def compare(
-        self, query: str | Path, references: list[str | Path]
-    ) -> list[MelodySimResult]:
-        q_mert_embedding = torch.as_tensor(
-            MertEmbedding.from_audio_file(
-                query,
-                mert_embedder=self.mert_embedder,
-            ).embedding
-        )
-
-        results: list[MelodySimResult] = []
-        for r in references:
-            r_mert_embedding = torch.as_tensor(
-                MertEmbedding.from_audio_file(
-                    r,
-                    mert_embedder=self.mert_embedder,
-                ).embedding
-            )
-
-            # ==================  Similarity matrix ========================
-            n1 = q_mert_embedding.shape[0]
-            n2 = r_mert_embedding.shape[0]
-            similarity_matrix = torch.zeros(
-                n1,
-                n2,
-            )
-            for i_row in range(n1):
-                similarity_matrix[i_row, :] = 1 - self.siamese.inference_step(
-                    q_mert_embedding[i_row : i_row + 1]
-                    .repeat(n2, 1, 1)
-                    .to(self.siamese.device),
-                    r_mert_embedding.to(self.siamese.device),
-                )
-
-            # ==================  Decision matrix ========================
-            proportion_thres = 0.2
-            decision_thres = 0.5
-            min_hits = 1
-            decision_matrix = similarity_matrix > decision_thres
-            n1, n2 = decision_matrix.shape
-            row_sum = decision_matrix.sum(dim=0)
-            col_sum = decision_matrix.sum(dim=1)
-            plagiarized_pieces1 = row_sum >= min_hits
-            plagiarized_pieces2 = col_sum >= min_hits
-            if (
-                plagiarized_pieces1.sum() > proportion_thres * n1
-                and plagiarized_pieces2.sum() > proportion_thres * n2
-            ):
-                decision = 1
-            else:
-                decision = 0
-
-            # ================== Score ==================
-            score = float(similarity_matrix.mean().item())
-
-            # ================== Final ==================
-            results.append(
-                MelodySimResult(
-                    score=score,
-                    decision=decision,
-                    decision_matrix=decision_matrix,
-                    similarity_matrix=similarity_matrix,
-                )
-            )
-
-        return results
-
-    def scores(self, query: str | Path, references: list[str | Path]) -> list[float]:
-        return [r.score for r in self.compare(query, references)]
 
 
 class ResidualBlock(nn.Module):
@@ -160,11 +62,238 @@ class SiameseNet(nn.Module):
         return x
 
 
+class SiameseWrapper(nn.Module):
+    def __init__(self, embedding_dim: int = 128, device: Optional[str] = None):
+        super().__init__()
+        self.siamese_net = SiameseNet(embedding_dim=embedding_dim)
+        self.classifier = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, 1),
+        )
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+
+        self.to(self.device)
+        self.eval()
+
+    @torch.no_grad()
+    def inference_step(
+        self, sample1: torch.Tensor, sample2: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Returns similarity scores in [0, 1] (higher = more similar).
+        """
+        out_embs1 = self.siamese_net(sample1)
+        out_embs2 = self.siamese_net(sample2)
+        diff = torch.abs(out_embs1 - out_embs2)
+        logit = self.classifier(diff).squeeze()
+        return torch.sigmoid(logit)
+
+
+def _aggregate_decision_matrix(
+    similarity_matrix: torch.Tensor,
+    *,
+    proportion_thres: float = 0.2,
+    decision_thres: float = 0.5,
+    min_hits: int = 1,
+) -> tuple[int, torch.Tensor]:
+    """
+    Matches the logic of your original wrapper (with correct n1/n2 usage).
+    """
+    decision_matrix = similarity_matrix > decision_thres
+    n1, n2 = decision_matrix.shape
+
+    # per your original code:
+    row_sum = decision_matrix.sum(dim=0)  # (n2,)
+    col_sum = decision_matrix.sum(dim=1)  # (n1,)
+    plagiarized_pieces1 = row_sum >= min_hits  # flags columns / reference pieces
+    plagiarized_pieces2 = col_sum >= min_hits  # flags rows / query pieces
+
+    # original wrapper condition:
+    if (plagiarized_pieces1.sum() > proportion_thres * n2) and (
+        plagiarized_pieces2.sum() > proportion_thres * n1
+    ):
+        return 1, decision_matrix
+    return 0, decision_matrix
+
+
+def _load_checkpoint_into_siamese(
+    siamese: SiameseWrapper,
+    ckpt_path: str | Path,
+    *,
+    strict: bool = True,
+) -> None:
+    ckpt_path = Path(ckpt_path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    checkpoint = torch.load(str(ckpt_path), map_location="cpu")
+
+    # common patterns:
+    # - {"state_dict": ...}
+    # - {"model": ...}
+    # - raw state_dict
+    state_dict = None
+    if isinstance(checkpoint, dict):
+        for key in (
+            "state_dict",
+            "model",
+            "model_state_dict",
+            "net",
+            "siamese",
+            "weights",
+        ):
+            if key in checkpoint and isinstance(checkpoint[key], dict):
+                state_dict = checkpoint[key]
+                break
+    if state_dict is None:
+        state_dict = checkpoint
+
+    # handle "module." prefix from DDP
+    cleaned = {}
+    for k, v in state_dict.items():
+        nk = k
+        if nk.startswith("module."):
+            nk = nk[len("module.") :]
+        cleaned[nk] = v
+
+    # sometimes trainer saves with wrapper prefix, e.g. "siamese.siamese_net..."
+    # we support both; try direct load first, then fallback strip common prefix.
+    try:
+        siamese.load_state_dict(cleaned, strict=strict)
+        return
+    except RuntimeError:
+        pass
+
+    # fallback: strip leading "siamese." if present
+    stripped = {}
+    for k, v in cleaned.items():
+        nk = k
+        if (
+            nk.startswith("siamese.")
+            or nk.startswith("siamese_net.")
+            or nk.startswith("classifier.")
+        ):
+            # leave these; they're already aligned
+            stripped[nk] = v
+        elif nk.startswith("model.") or nk.startswith("net."):
+            stripped[nk.split(".", 1)[1]] = v
+        else:
+            stripped[nk] = v
+
+    siamese.load_state_dict(stripped, strict=False)
+
+
+class MelodySimCompare:
+    """
+    Your original wrapper, but now:
+    - loads SiameseWrapper weights from a checkpoint
+    - keeps the same MertEmbedding-based workflow
+    """
+
+    def __init__(
+        self,
+        *,
+        ckpt_path: str | Path,
+        device: Optional[str] = None,
+        strict_load: bool = True,
+    ):
+        self.siamese = SiameseWrapper(device=device)
+        _load_checkpoint_into_siamese(self.siamese, ckpt_path, strict=strict_load)
+
+        # ensure correct device + eval after loading
+        self.siamese.to(self.siamese.device)
+        self.siamese.eval()
+
+        self.mert_embedder = MertEmbedder()
+
+    @torch.no_grad()
+    def compare(
+        self,
+        query: str | Path,
+        references: list[str | Path],
+        *,
+        proportion_thres: float = 0.2,
+        decision_thres: float = 0.5,
+        min_hits: int = 1,
+    ) -> list[MelodySimResult]:
+        q_mert_embedding = torch.as_tensor(
+            MertEmbedding.from_audio_file(
+                query,
+                mert_embedder=self.mert_embedder,
+            ).embedding,
+            dtype=torch.float32,
+        )
+
+        results: list[MelodySimResult] = []
+        device = self.siamese.device
+
+        for r in references:
+            r_mert_embedding = torch.as_tensor(
+                MertEmbedding.from_audio_file(
+                    r,
+                    mert_embedder=self.mert_embedder,
+                ).embedding,
+                dtype=torch.float32,
+            )
+
+            # ==================  Similarity matrix ========================
+            n1 = q_mert_embedding.shape[0]
+            n2 = r_mert_embedding.shape[0]
+            similarity_matrix = torch.zeros(n1, n2, device=device)
+
+            q_dev = q_mert_embedding.to(device)
+            r_dev = r_mert_embedding.to(device)
+
+            for i_row in range(n1):
+                similarity_matrix[i_row, :] = self.siamese.inference_step(
+                    q_dev[i_row : i_row + 1].repeat(n2, 1, 1),
+                    r_dev,
+                )
+
+            # ==================  Decision matrix ========================
+            decision, decision_matrix = _aggregate_decision_matrix(
+                similarity_matrix,
+                proportion_thres=proportion_thres,
+                decision_thres=decision_thres,
+                min_hits=min_hits,
+            )
+
+            # ================== Score ==================
+            score = float(similarity_matrix.mean().item())
+
+            # ================== Final (CPU) ==================
+            results.append(
+                MelodySimResult(
+                    score=score,
+                    decision=int(decision),
+                    decision_matrix=decision_matrix.detach().cpu(),
+                    similarity_matrix=similarity_matrix.detach().cpu(),
+                )
+            )
+
+        return results
+
+    def scores(
+        self, query: str | Path, references: list[str | Path], **kwargs
+    ) -> list[float]:
+        return [r.score for r in self.compare(query, references, **kwargs)]
+
+
 if __name__ == "__main__":
-    comparator = MelodySimCompare()
+    # Example:
+    #   python -m vibematcher.compare.melody_sim_compare -- adjust paths as needed
+    ckpt = Path("models/siamese_net_20250328.ckpt")  # <-- change me
+    comparator = MelodySimCompare(ckpt_path=ckpt)
+
     references = [Path(path) for path in Path("data/original").glob("*.wav")]
     scores = comparator.scores(
-        query="data/comparison/_DANCE_ 싸이 _PSY_ - 챔피언.wav",
+        query="data/comparison/Smoke On The Water _2024 Remastered_.wav",
         references=references,
     )
 
