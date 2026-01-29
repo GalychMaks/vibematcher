@@ -26,6 +26,7 @@ dependencies = [
   "torchcodec>=0.10.0",
   "typer>=0.21.1",
   "pytz>=2025.2",
+  "ipykernel>=7.1.0",
 ]
 
 [dependency-groups]

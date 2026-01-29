@@ -7,7 +7,8 @@ import gradio as gr
 import pandas as pd
 
 # from vibematcher.features.melody_sim import MelodySimCompare as Comparator
-from vibematcher.features.librosa_sim import LibrosaSimCompare as Comparator
+# from vibematcher.features.librosa_sim import LibrosaSimCompare as Comparator
+from vibematcher.features.f0_sim import F0SimCompare as Comparator
 
 
 # -----------------------
