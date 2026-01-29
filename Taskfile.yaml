@@ -23,3 +23,8 @@ tasks:
     desc: Generate MERT embeddings for audio files in the data/original directory
     cmds:
       - uv run python -m vibematcher.features.mert_embedder
+
+  eval:
+    desc: Run evaluation script on generated embeddings and print metrics 
+    cmds:
+      - uv run python -m vibematcher.eval.evaluate
