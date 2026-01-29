@@ -7,12 +7,15 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from vibematcher.chunking.audio_chunks import AudioChunks
+from vibematcher.chunking.song_former import SongFormer
 from vibematcher.features.mert_embedder import MertEmbedder
 from vibematcher.features.mert_embedding import MertEmbedding
 
 
 @dataclass(frozen=True)
-class MelodySimResult:
+class MelodySimChunkResult:
+    chunk_path: Path
     score: float
     decision: int
     decision_matrix: torch.Tensor
@@ -221,61 +224,92 @@ class MelodySimCompare:
         proportion_thres: float = 0.2,
         decision_thres: float = 0.5,
         min_hits: int = 1,
-    ) -> list[MelodySimResult]:
-        q_mert_embedding = torch.as_tensor(
-            MertEmbedding.from_audio_file(
-                query,
-                mert_embedder=self.mert_embedder,
-            ).embedding,
-            dtype=torch.float32,
-        )
+        force_recompute: bool = False,
+    ) -> list[MelodySimChunkResult]:
+        song_former = SongFormer()
+        mert_embedder = MertEmbedder()
 
-        results: list[MelodySimResult] = []
+        q_chunks: list[Path] = AudioChunks.from_audio_file(
+            query,
+            song_former=song_former,
+            force_recompute=force_recompute,
+        ).chunks
+        assert len(q_chunks) > 0, "No chunks found in query audio."
+        results: list[MelodySimChunkResult] = []
         device = self.siamese.device
 
         for r in references:
-            r_mert_embedding = torch.as_tensor(
+            r_chunks: list[Path] = AudioChunks.from_audio_file(
+                r,
+                song_former=song_former,
+                force_recompute=force_recompute,
+            ).chunks
+            assert len(r_chunks) > 0, "No chunks found in reference audio."
+
+            for r_chunk_path in r_chunks:
                 MertEmbedding.from_audio_file(
-                    r,
-                    mert_embedder=self.mert_embedder,
-                ).embedding,
-                dtype=torch.float32,
-            )
-
-            # ==================  Similarity matrix ========================
-            n1 = q_mert_embedding.shape[0]
-            n2 = r_mert_embedding.shape[0]
-            similarity_matrix = torch.zeros(n1, n2, device=device)
-
-            q_dev = q_mert_embedding.to(device)
-            r_dev = r_mert_embedding.to(device)
-
-            for i_row in range(n1):
-                similarity_matrix[i_row, :] = self.siamese.inference_step(
-                    q_dev[i_row : i_row + 1].repeat(n2, 1, 1),
-                    r_dev,
+                    r_chunk_path,
+                    mert_embedder=mert_embedder,
+                    force_recompute=force_recompute,
+                )
+                r_chunk_mert_embedding = torch.as_tensor(
+                    MertEmbedding.from_audio_file(
+                        r_chunk_path,
+                        mert_embedder=self.mert_embedder,
+                    ).embedding,
+                    dtype=torch.float32,
                 )
 
-            # ==================  Decision matrix ========================
-            decision, decision_matrix = _aggregate_decision_matrix(
-                similarity_matrix,
-                proportion_thres=proportion_thres,
-                decision_thres=decision_thres,
-                min_hits=min_hits,
-            )
+                best_result: Optional[MelodySimChunkResult] = None
+                best_score = float("-inf")
+                for q_chunk_path in q_chunks:
+                    q_chunk_mert_embedding = torch.as_tensor(
+                        MertEmbedding.from_audio_file(
+                            q_chunk_path,
+                            mert_embedder=self.mert_embedder,
+                        ).embedding,
+                        dtype=torch.float32,
+                    )
 
-            # ================== Score ==================
-            score = float(similarity_matrix.mean().item())
+                    # ==================  Similarity matrix ========================
+                    n1 = q_chunk_mert_embedding.shape[0]
+                    n2 = r_chunk_mert_embedding.shape[0]
+                    similarity_matrix = torch.zeros(n1, n2, device=device)
 
-            # ================== Final (CPU) ==================
-            results.append(
-                MelodySimResult(
-                    score=score,
-                    decision=int(decision),
-                    decision_matrix=decision_matrix.detach().cpu(),
-                    similarity_matrix=similarity_matrix.detach().cpu(),
-                )
-            )
+                    q_dev = q_chunk_mert_embedding.to(device)
+                    r_dev = r_chunk_mert_embedding.to(device)
+
+                    for i_row in range(n1):
+                        similarity_matrix[i_row, :] = self.siamese.inference_step(
+                            q_dev[i_row : i_row + 1].repeat(n2, 1, 1),
+                            r_dev,
+                        )
+
+                    # ==================  Decision matrix ========================
+                    decision, decision_matrix = _aggregate_decision_matrix(
+                        similarity_matrix,
+                        proportion_thres=proportion_thres,
+                        decision_thres=decision_thres,
+                        min_hits=min_hits,
+                    )
+
+                    # ================== Score ==================
+                    score = float(similarity_matrix.mean().item())
+                    print(score)
+
+                    # ================== Final (CPU) ==================
+                    if score > best_score:
+                        print("change")
+                        best_score = score
+                        best_result = MelodySimChunkResult(
+                            chunk_path=r_chunk_path,
+                            score=score,
+                            decision=int(decision),
+                            decision_matrix=decision_matrix.detach().cpu(),
+                            similarity_matrix=similarity_matrix.detach().cpu(),
+                        )
+
+                results.append(best_result)
 
         return results
 
@@ -290,14 +324,20 @@ if __name__ == "__main__":
     #   python -m vibematcher.compare.melody_sim_compare -- adjust paths as needed
     ckpt = Path("models/siamese_net_20250328.ckpt")  # <-- change me
     comparator = MelodySimCompare(ckpt_path=ckpt)
-
+    query = Path("data/comparison/Smoke On The Water _2024 Remastered_.wav")
+    print(f"Query: {query}")
     references = [Path(path) for path in Path("data/original").glob("*.wav")]
-    scores = comparator.scores(
-        query="data/comparison/Smoke On The Water _2024 Remastered_.wav",
+    results: MelodySimChunkResult = comparator.compare(
+        query=query,
         references=references,
     )
 
-    pairs = list(zip(references, scores))
+    pairs = list(
+        zip(
+            [r.chunk_path for r in results],
+            [r.score for r in results],
+        ),
+    )
     pairs.sort(key=lambda x: x[1], reverse=True)
 
     for ref, score in pairs:

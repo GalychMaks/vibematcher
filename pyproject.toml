@@ -24,6 +24,8 @@ dependencies = [
   "msaf>=0.1.80",
   "x-transformers>=2.14.2",
   "torchcodec>=0.10.0",
+  "typer>=0.21.1",
+  "pytz>=2025.2",
 ]
 
 [dependency-groups]

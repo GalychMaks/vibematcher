@@ -87,6 +87,7 @@ class SongFormer:
             dur_sec = float(audio.shape[0]) / float(sr)
             segments = [{"start": 0.0, "end": dur_sec, "label": "full"}]
 
+        print(chunk_paths)
         return chunk_paths
 
     # -------------------------
