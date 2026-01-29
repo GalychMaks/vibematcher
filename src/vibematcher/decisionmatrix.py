@@ -21,7 +21,7 @@ def compute_similarity_matrix(embeddings1: np.ndarray, embeddings2: np.ndarray) 
     # Compute cosine similarity matrix: [num_chunks1 x num_chunks2]
     similarity_matrix = torch.matmul(emb1, emb2.T)
 
-    print(similarity_matrix)
+    # print(similarity_matrix)
 
     # Convert similarity matrix to numpy
     return similarity_matrix.cpu().numpy()
@@ -37,13 +37,13 @@ def build_decision_matrix(similarity_matrix: np.ndarray, threshold: float = 0.85
     """
     # Apply threshold to convert similarities to binary decisions
     decision_matrix = (similarity_matrix >= threshold).astype(int)
-    print(decision_matrix)
+    # print(decision_matrix)
     return decision_matrix
 
 
 def aggregate_similarity_score(
     decision_matrix: np.ndarray,
-    min_diagonal_length: int = 2,
+    basic_diagonal_length: int = 2,
 ) -> float:
     """
     Aggregate similarity score based on diagonal matches in the decision matrix.
@@ -56,6 +56,7 @@ def aggregate_similarity_score(
     :return: similarity score in range [0, 1]
     """
     num_rows, num_cols = decision_matrix.shape
+    min_diagonal_length = min(min(num_rows, num_cols), basic_diagonal_length)
     # max_possible_length = min(num_rows, num_cols)
 
     longest_diagonal = 0

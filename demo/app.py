@@ -33,15 +33,15 @@ def compare(audio_path: str) -> pd.DataFrame:
     # -----------------------
     # Load or compute query audio embeddings
     # -----------------------
-    query_fp_dir = cache_dir_for_audio(Path(audio_path))
-    if query_fp_dir.exists():
-        query_fp = AudioFingerprint.load_from_dir(query_fp_dir)
-    else:
-        query_fp = AudioFingerprint.from_audio_file(
-            audio_path, window_len_sec=WINDOW_LEN_SEC, hop_len_sec=HOP_LEN_SEC
-        )
-        query_fp_dir.mkdir(parents=True, exist_ok=True)
-        query_fp.save_to_dir(query_fp_dir)
+    # query_fp_dir = cache_dir_for_audio(Path(audio_path))
+    # if query_fp_dir.exists():
+        # query_fp = AudioFingerprint.load_from_dir(query_fp_dir)
+    # else:
+    query_fp = AudioFingerprint.from_audio_file(
+        audio_path, window_len_sec=WINDOW_LEN_SEC, hop_len_sec=HOP_LEN_SEC
+    )
+    # query_fp_dir.mkdir(parents=True, exist_ok=True)
+    # query_fp.save_to_dir(query_fp_dir)
 
     items: list[str] = []
     similarities: list[float] = []

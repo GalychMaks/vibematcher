@@ -9,19 +9,15 @@ import soundfile as sf
 
 
 if __name__ == '__main__':
-    # sf.read("Bandido - Vamos Amigos _Eurodance Version_.wav")
-
+    
     correct = 0
     ground_truth = pd.read_csv('data/song_pairs.csv')
     songs_for_comparison = os.listdir('data/comparison')
-    # songs_for_comparison = pd.read_csv('../../data/comparison/')
 
     for song in songs_for_comparison:
         song_name = '.'.join(song.split('.')[:-1])
-        print(song_name)
+        # print(song_name)
         
-        # print('.'.join(song.split('.')[:-1]))
-        # print(ground_truth[ground_truth['comp_title'] == song_name]['ori_title'].values[0])
         correct_song = ground_truth[ground_truth['comp_title'] == song_name]['ori_title'].values[0] \
             if song_name in ground_truth['comp_title'].values else None
         df_similar_songs = compare(f'data/comparison/{song}')
