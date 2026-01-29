@@ -12,7 +12,14 @@ if __name__ == '__main__':
     
     correct = 0
     ground_truth = pd.read_csv('data/song_pairs.csv')
-    songs_for_comparison = os.listdir('data/comparison')
+    
+    songs_for_comparison = [
+        f for f in os.listdir('data/comparison')
+        if os.path.isfile(os.path.join('data/comparison', f))
+    ]
+
+    print(songs_for_comparison)
+
 
     for song in songs_for_comparison:
         song_name = '.'.join(song.split('.')[:-1])

@@ -27,7 +27,7 @@ def compute_similarity_matrix(embeddings1: np.ndarray, embeddings2: np.ndarray) 
     return similarity_matrix.cpu().numpy()
 
 
-def build_decision_matrix(similarity_matrix: np.ndarray, threshold: float = 0.85) -> np.ndarray:
+def build_decision_matrix(similarity_matrix: np.ndarray, threshold: float = 0.9) -> np.ndarray:
     """
     Build a binary decision matrix from the similarity matrix.
     
@@ -41,45 +41,99 @@ def build_decision_matrix(similarity_matrix: np.ndarray, threshold: float = 0.85
     return decision_matrix
 
 
+# def aggregate_similarity_score(
+#     decision_matrix: np.ndarray,
+#     basic_diagonal_length: int = 2,
+# ) -> float:
+#     """
+#     Aggregate similarity score based on diagonal matches in the decision matrix.
+
+#     A diagonal represents time-aligned matching chunks between two songs.
+#     The score is based on the longest diagonal of consecutive matches.
+
+#     :param decision_matrix: [num_chunks1, num_chunks2], values 0/1
+#     :param min_diagonal_length: minimum length of a diagonal run to be considered meaningful
+#     :return: similarity score in range [0, 1]
+#     """
+#     num_rows, num_cols = decision_matrix.shape
+#     min_diagonal_length = min(min(num_rows, num_cols), basic_diagonal_length)
+#     # max_possible_length = min(num_rows, num_cols)
+
+#     longest_diagonal = 0
+
+#     # Iterate over all possible diagonals (top-left to bottom-right)
+#     # Diagonals are indexed by (row - col)
+#     for offset in range(-num_cols + 1, num_rows):
+#         diag = np.diagonal(decision_matrix, offset=offset)
+
+#         # Find longest consecutive run of 1s in this diagonal
+#         current_run = 0
+#         for value in diag:
+#             if value == 1:
+#                 current_run += 1
+#                 longest_diagonal = max(longest_diagonal, current_run)
+#             else:
+#                 current_run = 0
+
+#     # If no diagonal of sufficient length exists, similarity is zero
+#     if longest_diagonal < min_diagonal_length:
+#         return 0.0
+
+#     # Normalize score to [0, 1]
+#     score = longest_diagonal
+
+#     return float(score)
+
 def aggregate_similarity_score(
     decision_matrix: np.ndarray,
+    similarity_matrix: np.ndarray,
     basic_diagonal_length: int = 2,
-) -> float:
+    lmbd = 0.01
+) -> tuple[float, float]:
     """
     Aggregate similarity score based on diagonal matches in the decision matrix.
 
-    A diagonal represents time-aligned matching chunks between two songs.
-    The score is based on the longest diagonal of consecutive matches.
-
-    :param decision_matrix: [num_chunks1, num_chunks2], values 0/1
-    :param min_diagonal_length: minimum length of a diagonal run to be considered meaningful
-    :return: similarity score in range [0, 1]
+    Returns:
+        longest_diagonal_length,
+        mean_similarity_on_longest_diagonal
     """
     num_rows, num_cols = decision_matrix.shape
     min_diagonal_length = min(min(num_rows, num_cols), basic_diagonal_length)
-    # max_possible_length = min(num_rows, num_cols)
 
     longest_diagonal = 0
+    best_offset = None
+    best_end_idx = None
 
-    # Iterate over all possible diagonals (top-left to bottom-right)
-    # Diagonals are indexed by (row - col)
     for offset in range(-num_cols + 1, num_rows):
         diag = np.diagonal(decision_matrix, offset=offset)
 
-        # Find longest consecutive run of 1s in this diagonal
         current_run = 0
-        for value in diag:
+        for i, value in enumerate(diag):
             if value == 1:
                 current_run += 1
-                longest_diagonal = max(longest_diagonal, current_run)
+                if current_run > longest_diagonal:
+                    longest_diagonal = current_run
+                    best_offset = offset
+                    best_end_idx = i
             else:
                 current_run = 0
 
-    # If no diagonal of sufficient length exists, similarity is zero
     if longest_diagonal < min_diagonal_length:
-        return 0.0
+        return 0.0, 0.0
 
-    # Normalize score to [0, 1]
-    score = longest_diagonal
+    start_idx = best_end_idx - longest_diagonal + 1
 
-    return float(score)
+    if best_offset >= 0:
+        rows = np.arange(start_idx, best_end_idx + 1)
+        cols = rows - best_offset
+    else:
+        cols = np.arange(start_idx, best_end_idx + 1)
+        rows = cols + best_offset
+
+    mean_similarity = float(
+        similarity_matrix[rows, cols].mean()
+    )
+
+    final_similarity = mean_similarity #+ lmbd * float(longest_diagonal), 1.0)
+
+    return float(longest_diagonal), final_similarity
