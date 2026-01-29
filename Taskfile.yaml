@@ -28,3 +28,18 @@ tasks:
     desc: Run evaluation script on generated embeddings and print metrics
     cmds:
       - uv run python -m vibematcher.eval.evaluate
+
+  f0:
+    desc: Extract F0 features from an audio file
+    cmds:
+      - uv run python -m vibematcher.features.f0_wrapper
+
+  f0-embedding:
+    desc: Extract F0 embeddings from an audio file
+    cmds:
+      - uv run python -m vibematcher.features.f0_embedding 
+
+  f0-sim:
+    desc: Compare F0 features between two audio files
+    cmds:
+      - uv run python -m vibematcher.features.f0_sim
