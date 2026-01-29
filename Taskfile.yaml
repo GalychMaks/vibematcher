@@ -17,7 +17,7 @@ tasks:
   compare:
     desc: Compare two songs and generate a similarity report
     cmds:
-      - uv run python -m vibematcher.features.melody_sim
+      - uv run python -m vibematcher.features.librosa_sim
 
   mert:
     desc: Generate MERT embeddings for audio files in the data/original directory
@@ -25,6 +25,6 @@ tasks:
       - uv run python -m vibematcher.features.mert_embedder
 
   eval:
-    desc: Run evaluation script on generated embeddings and print metrics 
+    desc: Run evaluation script on generated embeddings and print metrics
     cmds:
       - uv run python -m vibematcher.eval.evaluate

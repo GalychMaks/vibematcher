@@ -202,7 +202,7 @@ class MelodySimCompare:
     def __init__(
         self,
         *,
-        ckpt_path: str | Path,
+        ckpt_path: str | Path = Path("models/siamese_net_20250328.ckpt"),
         device: Optional[str] = None,
         strict_load: bool = True,
     ):

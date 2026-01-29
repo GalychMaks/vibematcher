@@ -4,8 +4,8 @@ from typing import Dict, List
 import pandas as pd
 from tqdm import tqdm
 
-from vibematcher.features.melody_sim import MelodySimCompare
-
+# from vibematcher.features.melody_sim import MelodySimCompare as Comparator
+from vibematcher.features.librosa_sim import LibrosaFeatureCompare as Comparator
 
 # ==========================
 # CONFIG (hardcoded)
@@ -13,16 +13,8 @@ from vibematcher.features.melody_sim import MelodySimCompare
 GT_CSV = Path("data/song_pairs.csv")  # columns: ori_title, comp_title, relation
 ORIGINAL_DIR = Path("data/original")  # originals / references
 QUERY_DIR = Path("data/comparison")  # comparisons / queries
-CKPT_PATH = Path("models/siamese_net_20250328.ckpt")
 
-OUT_CSV = Path("runs/eval_preds.csv")
-
-# Comparator params
-DEVICE = None  # "cuda" / "cpu" / None(auto)
-PROPORTION_THRES = 0.2
-DECISION_THRES = 0.5
-MIN_HITS = 1
-FORCE_RECOMPUTE = False
+OUT_CSV = Path("artifacts/eval_preds_librosa.csv")
 
 # Label mapping (binary)
 POSITIVE_RELATIONS = {"plag", "plag_doubt", "remake", "sample", "cover"}
@@ -30,6 +22,18 @@ NEGATIVE_RELATIONS = {"no_plag", "no", "none", "negative", "not_plag", "original
 
 # What audio extensions to index (for strict name matching)
 AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
+SCORE_THRES = 0.60  # tune this
+
+
+_COMPARATOR: Comparator | None = None
+
+
+def get_comparator() -> Comparator:
+    global _COMPARATOR
+    if _COMPARATOR is None:
+        _COMPARATOR = Comparator()
+    print(f"Loaded Comparator: {_COMPARATOR.__class__.__name__}")
+    return _COMPARATOR
 
 
 def relation_to_label(rel: str) -> int:
@@ -38,8 +42,6 @@ def relation_to_label(rel: str) -> int:
         return 0
     if r in POSITIVE_RELATIONS:
         return 1
-    # fallback: assume positive unless explicitly negative
-    return 1
 
 
 def compute_metrics(y_true: List[int], y_pred: List[int]) -> Dict[str, float]:
@@ -87,9 +89,25 @@ def build_strict_index(files: List[Path]) -> Dict[str, Path]:
     return idx
 
 
+def pick_best_with_threshold(results, score_thres: float):
+    """
+    results: list[MelodySimChunkResult]
+    Selection rule:
+      - if any score >= thres: pick max among those
+      - else: pick global max score
+    """
+    if not results:
+        return None, None  # best_any, best_over_thres
+
+    best_any = max(results, key=lambda r: r.score)
+    over = [r for r in results if float(r.score) >= score_thres]
+    best_over = max(over, key=lambda r: r.score) if over else None
+    return best_any, best_over
+
+
 def main() -> None:
     # Checks
-    for p in [GT_CSV, ORIGINAL_DIR, QUERY_DIR, CKPT_PATH]:
+    for p in [GT_CSV, ORIGINAL_DIR, QUERY_DIR]:
         if not p.exists():
             raise FileNotFoundError(f"Not found: {p}")
 
@@ -109,7 +127,7 @@ def main() -> None:
     orig_idx = build_strict_index(original_files)
     query_idx = build_strict_index(query_files)
 
-    comparator = MelodySimCompare(ckpt_path=CKPT_PATH, device=DEVICE)
+    comparator = get_comparator()
 
     y_true: List[int] = []
     y_pred: List[int] = []
@@ -158,27 +176,31 @@ def main() -> None:
         results = comparator.compare(
             query=comp_path,
             references=[ori_path],
-            proportion_thres=PROPORTION_THRES,
-            decision_thres=DECISION_THRES,
-            min_hits=MIN_HITS,
-            force_recompute=FORCE_RECOMPUTE,
         )
 
-        # Find the overall best match (highest score) across all r_chunks
-        best = max(results, key=lambda r: r.score) if results else None
+        best_any, best_over = pick_best_with_threshold(results, SCORE_THRES)
 
-        if best is None:
-            pred_decision = 0
-            pred_score = float("nan")
+        if best_any is None:
+            best_score_any = float("nan")
+            status = "no_results"
             best_q_chunk = ""
             best_r_chunk = ""
-            status = "no_results"
         else:
-            pred_decision = int(best.decision)
-            pred_score = float(best.score)
-            best_q_chunk = str(best.q_chunk_path)
-            best_r_chunk = str(best.r_chunk_path)
+            best_score_any = float(best_any.score)
+
+            # prediction by threshold on the GLOBAL best score
+            pred_decision = 1 if best_score_any >= SCORE_THRES else 0
+            pred_score = best_score_any
             status = "ok"
+
+            # selection rule for "best chunk"
+            if best_over is not None:
+                selected = best_over
+            else:
+                selected = best_any
+
+            best_q_chunk = str(selected.q_chunk_path)
+            best_r_chunk = str(selected.r_chunk_path)
 
         y_true.append(gt)
         y_pred.append(pred_decision)

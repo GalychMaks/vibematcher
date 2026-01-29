@@ -3,23 +3,24 @@ from pathlib import Path
 import gradio as gr
 import pandas as pd
 
-from vibematcher.features.melody_sim import MelodySimCompare
+# from vibematcher.features.melody_sim import MelodySimCompare as Comparator
+from vibematcher.features.librosa_sim import LibrosaFeatureCompare as Comparator
 
 
 # -----------------------
 # Hardcoded settings
 # -----------------------
 DATASET_DIR = Path("data/original")  # <-- change to your wav root dir
-SIAMESE_CKPT = Path("models/siamese_net_20250328.ckpt")  # <-- change me
 
-_MELODY_COMP: MelodySimCompare | None = None
+_COMPARATOR: Comparator | None = None
 
 
-def get_comparator() -> MelodySimCompare:
-    global _MELODY_COMP
-    if _MELODY_COMP is None:
-        _MELODY_COMP = MelodySimCompare(ckpt_path=SIAMESE_CKPT)
-    return _MELODY_COMP
+def get_comparator() -> Comparator:
+    global _COMPARATOR
+    if _COMPARATOR is None:
+        _COMPARATOR = Comparator()
+    print(f"Loaded Comparator: {_COMPARATOR.__class__.__name__}")
+    return _COMPARATOR
 
 
 # -----------------------
