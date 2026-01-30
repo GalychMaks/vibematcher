@@ -1,10 +1,9 @@
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 from rapidfuzz import distance
-from vibematcher.pitch.pitch_cache import NO_PITCH, MelodySequence
+from vibematcher.pitch.pitch_cache import MelodySequence
 from vibematcher.stems.demucs import DemucsStemsSeparator
 from vibematcher.stems.stems_cache import Stems
 
@@ -22,12 +21,6 @@ PC_TO_INT = {
     "A#": 10,
     "B": 11,
 }
-
-
-def no_pitch_ratio(seq: Sequence[str]) -> float:
-    if not seq:
-        return 1.0
-    return sum(1 for x in seq if x == NO_PITCH) / len(seq)
 
 
 def _signed_pc_interval(a: int, b: int) -> int:
@@ -84,16 +77,10 @@ class CompareWER:
         best = float("nan")
         for q in q_stems:
             q_melody = MelodySequence.from_audio_file(q).melody
-            if no_pitch_ratio(q_melody) > 0.5:
-                print(f"Skipping {q}")
-                continue
             q_intervals = melody_to_signed_intervals(q_melody)
 
             for r in r_stems:
                 r_melody = MelodySequence.from_audio_file(r).melody
-                if no_pitch_ratio(r_melody) > 0.5:
-                    print(f"Skipping {r}")
-                    continue
                 r_intervals = melody_to_signed_intervals(r_melody)
 
                 score = interval_wer(reference=r_intervals, hypothesis=q_intervals)

@@ -3,13 +3,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-
 import librosa
 
 from vibematcher.f0.f0_contour_cache import F0Contour
 
 NO_PITCH = "<no_pitch>"
-
 
 PC_NAMES = {
     0: "C",
@@ -33,6 +31,17 @@ class MelodySequence:
 
     MELODY_KEY = "melody.txt"
 
+    @staticmethod
+    def _compress_repeats(seq: list[str]) -> list[str]:
+        """Collapse consecutive identical tokens to a single token."""
+        if not seq:
+            return []
+        compressed: list[str] = [seq[0]]
+        for x in seq[1:]:
+            if x != compressed[-1]:
+                compressed.append(x)
+        return compressed
+
     @classmethod
     def from_audio_file(
         cls,
@@ -43,6 +52,7 @@ class MelodySequence:
         audio_path = Path(audio_path)
         cache_dir = audio_path.parent / audio_path.stem
         melody_path = cache_dir / cls.MELODY_KEY
+
         if not force_recompute and cache_dir.exists() and melody_path.exists():
             melody = melody_path.read_text().split(" ")
             return cls(melody=melody)
@@ -60,6 +70,9 @@ class MelodySequence:
             midi = float(librosa.hz_to_midi(f))
             pc = int(round(midi)) % 12
             melody.append(PC_NAMES[pc])
+
+        # Compress the melody (remove repeating notes in a row)
+        melody = cls._compress_repeats(melody)
 
         melody_path.parent.mkdir(parents=True, exist_ok=True)
         melody_path.write_text(" ".join(melody))
