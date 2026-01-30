@@ -54,5 +54,7 @@ dist/
 
 # === Project Specific ===
 data/
+models/
+artifacts/
 
 TODO

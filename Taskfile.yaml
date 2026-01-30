@@ -1,0 +1,49 @@
+version: "3"
+
+dotenv: [".env"]
+
+tasks:
+  demo:
+    desc: Open MCP Inspector for the cai-tools server defined in mcp.json
+    cmds:
+      - uv run python -m demo.app
+
+  demucs:
+    desc: Run demucs stem separation
+    cmds:
+      - >
+        uv run 
+        python -m demucs
+        --two-stems vocals
+        --out "data/original/Queen - Under Pressure _Official Video_"
+        "data/original/Queen - Under Pressure _Official Video_.wav"
+
+  stems:
+    desc: Extract and print the list of stems
+    cmds:
+      - uv run python -m vibematcher.stem.stems_cache
+
+  f0:
+    desc: Extract f0
+    cmds:
+      - uv run python -m src.vibematcher.f0.f0_contour_cache
+
+  melody:
+    desc: Test melody extraction
+    cmds:
+      - uv run python -m vibematcher.pitch.pitch_cache
+
+  wer:
+    desc: Compute wer similarity between songs
+    cmds:
+      - uv run python -m vibematcher.compare.wer_comparator
+
+  compare:
+    desc: Run comparison on two songs
+    cmds:
+      - uv run python -m vibematcher.compare_dtw
+
+  eval:
+    desc: Run evaluation and compute accuracy
+    cmds:
+      - uv run python -m vibematcher.evaluate
