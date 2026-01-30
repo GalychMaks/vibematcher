@@ -2,6 +2,8 @@ import csv
 from pathlib import Path
 from typing import Callable, Iterable
 
+from tqdm import tqdm
+
 
 def normalize_title(title: str) -> str:
     return title.strip()
@@ -30,6 +32,11 @@ def get_comparator(name: str) -> tuple[Callable[[Path, Path], float], bool]:
         from vibematcher.compare import CompareMERT
 
         return CompareMERT.score, True
+
+    if name == "muq":
+        from vibematcher.compare import CompareMUQ
+
+        return CompareMUQ.score, True
     raise SystemExit(f"Unknown comparator '{name}'. Use 'dtw' or 'wer'.")
 
 
@@ -50,7 +57,7 @@ def evaluate(
     original_dir: Path = Path("data/original"),
     pairs_csv_path: Path = Path("data/song_pairs.csv"),
     top_k: int = 1,
-    comparator: str = "mert",
+    comparator: str = "muq",
 ) -> int:
     pairs = load_pairs(pairs_csv_path)
     queries = list_wav_tracks(comparison_dir)
@@ -65,7 +72,7 @@ def evaluate(
 
     hits = 0
     total = 0
-    for query in queries:
+    for query in tqdm(queries):
         query_title = normalize_title(query.stem)
         results = score_all(query, references, scorer)
         results.sort(key=lambda item: item[1], reverse=higher_is_better)

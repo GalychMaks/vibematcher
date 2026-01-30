@@ -5,6 +5,8 @@ import numpy as np
 
 from vibematcher.mert.mert_embedder import MertEmbedder
 from vibematcher.mert.mert_embedding import MertEmbedding
+from vibematcher.muq.muq_embedder import MuQEmbedder
+from vibematcher.muq.muq_embedding import MuQEmbedding
 
 
 def cosine_similarity_matrix(
@@ -51,18 +53,39 @@ def aggregate_chunk_similarities(sim_matrix: np.ndarray, mode: str = "best") -> 
 
 @dataclass
 class CompareMERT:
-    mert_embedder = MertEmbedder()
+    embedder = MertEmbedder()
 
     @classmethod
     def score(cls, query_path: str | Path, reference_path: str | Path) -> float:
         q_emb = MertEmbedding.from_audio_file(
             query_path,
-            embedder=cls.mert_embedder,
-        ).mert_embeddings
+            embedder=cls.embedder,
+        ).m
         r_emb = MertEmbedding.from_audio_file(
             reference_path,
-            embedder=cls.mert_embedder,
+            embedder=cls.embedder,
         ).mert_embeddings
+
+        mert_corr = cosine_similarity_matrix(q_emb, r_emb)  # (Q, C)
+        mert_sim = aggregate_chunk_similarities(mert_corr)
+
+        return mert_sim
+
+
+@dataclass
+class CompareMUQ:
+    embedder = MuQEmbedder()
+
+    @classmethod
+    def score(cls, query_path: str | Path, reference_path: str | Path) -> float:
+        q_emb = MuQEmbedding.from_audio_file(
+            query_path,
+            embedder=cls.embedder,
+        ).muq_embeddings
+        r_emb = MuQEmbedding.from_audio_file(
+            reference_path,
+            embedder=cls.embedder,
+        ).muq_embeddings
 
         mert_corr = cosine_similarity_matrix(q_emb, r_emb)  # (Q, C)
         mert_sim = aggregate_chunk_similarities(mert_corr)
