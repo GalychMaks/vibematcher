@@ -7,3 +7,8 @@ tasks:
     desc: Open MCP Inspector for the cai-tools server defined in mcp.json
     cmds:
       - uv run python -m demo.app
+
+  eval:
+    desc: Compute acc
+    cmds:
+      - uv run python -m vibematcher.evaluate
